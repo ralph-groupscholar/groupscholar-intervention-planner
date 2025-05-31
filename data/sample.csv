@@ -1,0 +1,7 @@
+id,name,cohort,channel_preference,last_touch,risk_score,flags
+S-001,Amara Lewis,Spring-2026,email,2026-01-12,82,financial;housing
+S-002,Diego Patel,Spring-2026,text,2025-12-20,67,health
+S-003,Lin Chen,Fall-2025,call,2026-01-29,38,
+S-004,Marisol Reyes,Winter-2026,email,,91,crisis
+S-005,Noah Kim,Fall-2025,sms,2026-01-02,55,food
+S-006,Sara Wells,Spring-2026,email,2025-11-18,24,
