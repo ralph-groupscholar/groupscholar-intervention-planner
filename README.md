@@ -6,6 +6,7 @@ Group Scholar Intervention Planner is a local-first CLI that turns scholar risk 
 - Prioritized action queue based on risk score, cadence, and urgency.
 - Overdue/due-soon/on-track touchpoint classification.
 - Tiered cadence guidance (high/medium/low risk).
+- Channel mix, high-impact flag counts, and cohort hotspot summary.
 - JSON export for downstream dashboards or briefings.
 - Sample dataset to test the workflow quickly.
 
@@ -21,6 +22,7 @@ python3 intervention_planner.py --input data/sample.csv
 python3 intervention_planner.py \
   --input data/sample.csv \
   --limit 5 \
+  --cohort-limit 3 \
   --soon-days 10 \
   --json report.json
 ```
@@ -31,6 +33,7 @@ python3 intervention_planner.py \
 - `--high-risk`: risk score threshold for high risk (default: 70).
 - `--medium-risk`: risk score threshold for medium risk (default: 40).
 - `--soon-days`: days ahead to flag a due-soon touch (default: 14).
+- `--cohort-limit`: number of cohorts to list in the hotspot summary (default: 5).
 - `--today`: override today's date in `YYYY-MM-DD` format.
 - `--json`: write a JSON report to the given path.
 
@@ -47,6 +50,8 @@ Required headers (case-insensitive):
 ## Output
 The CLI prints:
 - A summary of touchpoint status and risk tiers.
+- Channel mix and high-impact flag highlights.
+- Cohort hotspot summary to target outreach coverage.
 - A priority action queue with recommended next steps.
 - Cadence guidance for each tier.
 

@@ -202,6 +202,81 @@ def summarize(scored: List[ScoredRecord]) -> Dict[str, int]:
     return summary
 
 
+def normalize_channel(channel: str) -> str:
+    value = (channel or "").strip().lower()
+    if not value:
+        return "unknown"
+    if value in {"sms", "text"}:
+        return "sms"
+    if value in {"phone", "call"}:
+        return "call"
+    return value
+
+
+def summarize_channels(scored: List[ScoredRecord]) -> Dict[str, int]:
+    mix: Dict[str, int] = {}
+    for record in scored:
+        key = normalize_channel(record.channel_preference)
+        mix[key] = mix.get(key, 0) + 1
+    return dict(sorted(mix.items(), key=lambda item: item[1], reverse=True))
+
+
+def summarize_flags(scored: List[ScoredRecord]) -> Dict[str, int]:
+    counts: Dict[str, int] = {}
+    for record in scored:
+        for flag in record.flags:
+            if flag in HIGH_IMPACT_FLAGS:
+                counts[flag] = counts.get(flag, 0) + 1
+    return dict(sorted(counts.items(), key=lambda item: item[1], reverse=True))
+
+
+def summarize_cohorts(scored: List[ScoredRecord]) -> List[Dict[str, object]]:
+    cohorts: Dict[str, Dict[str, object]] = {}
+    for record in scored:
+        cohort = record.cohort.strip() if record.cohort else "Unassigned"
+        bucket = cohorts.setdefault(
+            cohort,
+            {
+                "cohort": cohort,
+                "total": 0,
+                "overdue": 0,
+                "due_soon": 0,
+                "no_touch": 0,
+                "avg_priority": 0.0,
+                "high_risk": 0,
+                "medium_risk": 0,
+                "low_risk": 0,
+            },
+        )
+        bucket["total"] += 1
+        if record.status == "overdue":
+            bucket["overdue"] += 1
+        elif record.status == "due-soon":
+            bucket["due_soon"] += 1
+        elif record.status == "no-touch":
+            bucket["no_touch"] += 1
+
+        if record.cadence_days == 7:
+            bucket["high_risk"] += 1
+        elif record.cadence_days == 21:
+            bucket["medium_risk"] += 1
+        else:
+            bucket["low_risk"] += 1
+        bucket["avg_priority"] = round(
+            (bucket["avg_priority"] * (bucket["total"] - 1) + record.priority_score) / bucket["total"],
+            2,
+        )
+
+    return sorted(
+        cohorts.values(),
+        key=lambda item: (
+            -int(item["overdue"]),
+            -int(item["due_soon"]),
+            -float(item["avg_priority"]),
+        ),
+    )
+
+
 def print_summary(summary: Dict[str, int]) -> None:
     print("\nIntervention Summary")
     print("--------------------")
@@ -213,6 +288,42 @@ def print_summary(summary: Dict[str, int]) -> None:
     print(f"Due soon: {summary['due_soon']}")
     print(f"On track: {summary['on_track']}")
     print(f"No prior touch: {summary['no_touch']}")
+
+
+def print_channel_mix(mix: Dict[str, int]) -> None:
+    print("\nChannel Mix")
+    print("-----------")
+    if not mix:
+        print("No channel data available.")
+        return
+    for channel, count in mix.items():
+        print(f"{channel:<10} {count}")
+
+
+def print_flag_highlights(flag_counts: Dict[str, int]) -> None:
+    print("\nHigh-Impact Flags")
+    print("-----------------")
+    if not flag_counts:
+        print("No high-impact flags captured.")
+        return
+    for flag, count in flag_counts.items():
+        print(f"{flag:<12} {count}")
+
+
+def print_cohort_summary(cohorts: List[Dict[str, object]], limit: int) -> None:
+    print("\nCohort Hotspots")
+    print("---------------")
+    if not cohorts:
+        print("No cohort data available.")
+        return
+    header = f"{'Cohort':<16} {'Total':>5} {'Overdue':>7} {'DueSoon':>7} {'NoTouch':>7} {'AvgScore':>9}"
+    print(header)
+    print("-" * len(header))
+    for bucket in cohorts[:limit]:
+        print(
+            f"{bucket['cohort'][:16]:<16} {bucket['total']:>5} {bucket['overdue']:>7} "
+            f"{bucket['due_soon']:>7} {bucket['no_touch']:>7} {bucket['avg_priority']:>9.1f}"
+        )
 
 
 def print_action_queue(scored: List[ScoredRecord], limit: int) -> None:
@@ -253,6 +364,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--high-risk", type=float, default=70, help="Risk score threshold for high risk")
     parser.add_argument("--medium-risk", type=float, default=40, help="Risk score threshold for medium risk")
     parser.add_argument("--soon-days", type=int, default=14, help="Days ahead to flag as due soon")
+    parser.add_argument("--cohort-limit", type=int, default=5, help="Number of cohorts to list in hotspot summary")
     parser.add_argument("--today", help="Override today's date (YYYY-MM-DD)")
     parser.add_argument("--json", dest="json_path", help="Optional path to write JSON output")
     return parser.parse_args()
@@ -270,8 +382,14 @@ def main() -> None:
     records = load_csv(args.input)
     scored = build_report(records, today, args.high_risk, args.medium_risk, args.soon_days)
     summary = summarize(scored)
+    channel_mix = summarize_channels(scored)
+    flag_counts = summarize_flags(scored)
+    cohorts = summarize_cohorts(scored)
 
     print_summary(summary)
+    print_channel_mix(channel_mix)
+    print_flag_highlights(flag_counts)
+    print_cohort_summary(cohorts, args.cohort_limit)
     print_action_queue(scored, args.limit)
     print_cadence_guidance()
 
@@ -280,6 +398,9 @@ def main() -> None:
             "generated_at": datetime.now().isoformat(timespec="seconds"),
             "today": today.isoformat(),
             "summary": summary,
+            "channel_mix": channel_mix,
+            "high_impact_flags": flag_counts,
+            "cohort_summary": cohorts,
             "records": [asdict(record) for record in scored],
         }
         with open(args.json_path, "w", encoding="utf-8") as handle:
