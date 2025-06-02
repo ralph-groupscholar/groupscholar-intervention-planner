@@ -14,7 +14,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Seed the Intervention Planner tables with sample data.")
     parser.add_argument("--input", default="data/sample.csv", help="CSV path for seed run")
     parser.add_argument("--schema", default=planner.DEFAULT_DB_SCHEMA, help="Postgres schema name")
-    parser.add_argument("--run-label", default="Seed run", help="Label for the seeded run")
+    parser.add_argument("--run-label", help="Label for the seeded run")
     parser.add_argument("--today", help="Override today's date for the seed run (YYYY-MM-DD)")
     return parser.parse_args()
 
@@ -28,6 +28,8 @@ def main() -> None:
             raise SystemExit("Invalid --today date format. Use YYYY-MM-DD.")
         today = parsed
 
+    schema = planner.validate_schema_name(args.schema)
+    run_label = args.run_label or planner.default_run_label(args.input, today)
     records = planner.load_csv(args.input)
     scored = planner.build_report(records, today, high=70, medium=40, soon_days=14)
     payload = {
@@ -46,8 +48,8 @@ def main() -> None:
 
     planner.write_run_to_db(
         dsn=dsn,
-        schema=args.schema,
-        run_label=args.run_label,
+        schema=schema,
+        run_label=run_label,
         args=argparse.Namespace(
             input=args.input,
             high_risk=70,
@@ -58,7 +60,7 @@ def main() -> None:
         ),
         payload=payload,
     )
-    print(f"Seeded sample data into schema '{args.schema}'.")
+    print(f"Seeded sample data into schema '{schema}'.")
 
 
 if __name__ == "__main__":

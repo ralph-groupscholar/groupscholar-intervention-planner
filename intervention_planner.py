@@ -3,8 +3,10 @@ import argparse
 import csv
 import json
 import os
+import re
 from dataclasses import dataclass, asdict
 from datetime import datetime, date, timedelta
+from pathlib import Path
 from typing import List, Optional, Dict, Tuple
 
 HIGH_IMPACT_FLAGS = {"crisis", "housing", "food", "health", "safety", "financial"}
@@ -62,6 +64,17 @@ def parse_flags(value: str) -> List[str]:
     if not value:
         return []
     return [flag.strip().lower() for flag in value.split(";") if flag.strip()]
+
+
+def validate_schema_name(schema: str) -> str:
+    if not re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", schema):
+        raise SystemExit("Invalid schema name. Use letters, numbers, and underscores only.")
+    return schema
+
+
+def default_run_label(input_path: str, today: date) -> str:
+    stem = Path(input_path).stem or "intervention"
+    return f"{stem}-{today.isoformat()}"
 
 
 def load_csv(path: str) -> List[ScholarRecord]:
@@ -584,8 +597,10 @@ def main() -> None:
         dsn = resolve_db_dsn()
         if not dsn:
             raise SystemExit("Database env vars missing. Set GS_DB_DSN or GS_DB_HOST/GS_DB_NAME/GS_DB_USER/GS_DB_PASSWORD.")
-        write_run_to_db(dsn, args.db_schema, args.run_label, args, payload)
-        print(f"\nDatabase run stored in schema '{args.db_schema}'.")
+        schema = validate_schema_name(args.db_schema)
+        run_label = args.run_label or default_run_label(args.input, today)
+        write_run_to_db(dsn, schema, run_label, args, payload)
+        print(f"\nDatabase run stored in schema '{schema}'.")
 
 
 if __name__ == "__main__":

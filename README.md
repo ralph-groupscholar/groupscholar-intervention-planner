@@ -37,6 +37,9 @@ python3 intervention_planner.py \
 - `--cohort-limit`: number of cohorts to list in the hotspot summary (default: 5).
 - `--today`: override today's date in `YYYY-MM-DD` format.
 - `--json`: write a JSON report to the given path.
+- `--db-write`: write the run + records to Postgres (requires `psycopg`).
+- `--db-schema`: Postgres schema to store tables (letters/numbers/underscores only).
+- `--run-label`: optional label to tag the database run (defaults to `<input-stem>-<YYYY-MM-DD>`).
 - `--db-write`: persist the run + records to Postgres (requires env vars below).
 - `--db-schema`: schema for planner tables (default: `groupscholar_intervention_planner`).
 - `--run-label`: optional label for the database run.
