@@ -8,6 +8,7 @@ Group Scholar Intervention Planner is a local-first CLI that turns scholar risk 
 - Tiered cadence guidance (high/medium/low risk).
 - Channel mix, high-impact flag counts, and cohort hotspot summary.
 - JSON export for downstream dashboards or briefings.
+- Optional Postgres persistence for run history and records.
 - Sample dataset to test the workflow quickly.
 
 ## Quickstart
@@ -36,6 +37,9 @@ python3 intervention_planner.py \
 - `--cohort-limit`: number of cohorts to list in the hotspot summary (default: 5).
 - `--today`: override today's date in `YYYY-MM-DD` format.
 - `--json`: write a JSON report to the given path.
+- `--db-write`: persist the run + records to Postgres (requires env vars below).
+- `--db-schema`: schema for planner tables (default: `groupscholar_intervention_planner`).
+- `--run-label`: optional label for the database run.
 
 ## CSV Schema
 Required headers (case-insensitive):
@@ -56,7 +60,42 @@ The CLI prints:
 - Cadence guidance for each tier.
 
 ## Tech
-- Python 3 (standard library only)
+- Python 3
+- Postgres (optional) via `psycopg`
+
+## Postgres Integration (Optional)
+
+Install the dependency:
+
+```bash
+pip install psycopg[binary]
+```
+
+Set environment variables (do not hardcode credentials):
+
+```bash
+export GS_DB_HOST=your_host
+export GS_DB_PORT=5432
+export GS_DB_NAME=your_db
+export GS_DB_USER=your_user
+export GS_DB_PASSWORD=your_password
+# Optional if your server does not require SSL:
+export GS_DB_SSLMODE=disable
+```
+
+You can also provide a full `GS_DB_DSN` (or `DATABASE_URL`) instead of the individual env vars.
+
+Then run:
+
+```bash
+python3 intervention_planner.py --input data/sample.csv --db-write --run-label "Weekly outreach"
+```
+
+Seed sample data (creates tables if missing):
+
+```bash
+python3 scripts/seed_db.py
+```
 
 ## Notes
 This tool is designed for local-first workflows and can be run on any machine with Python 3.

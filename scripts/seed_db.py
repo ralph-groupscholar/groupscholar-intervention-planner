@@ -1,0 +1,65 @@
+#!/usr/bin/env python3
+import argparse
+import sys
+from datetime import date
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.append(str(ROOT))
+
+import intervention_planner as planner  # noqa: E402
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Seed the Intervention Planner tables with sample data.")
+    parser.add_argument("--input", default="data/sample.csv", help="CSV path for seed run")
+    parser.add_argument("--schema", default=planner.DEFAULT_DB_SCHEMA, help="Postgres schema name")
+    parser.add_argument("--run-label", default="Seed run", help="Label for the seeded run")
+    parser.add_argument("--today", help="Override today's date for the seed run (YYYY-MM-DD)")
+    return parser.parse_args()
+
+
+def main() -> None:
+    args = parse_args()
+    today = date.today()
+    if args.today:
+        parsed = planner.parse_date(args.today)
+        if not parsed:
+            raise SystemExit("Invalid --today date format. Use YYYY-MM-DD.")
+        today = parsed
+
+    records = planner.load_csv(args.input)
+    scored = planner.build_report(records, today, high=70, medium=40, soon_days=14)
+    payload = {
+        "generated_at": planner.datetime.now().isoformat(timespec="seconds"),
+        "today": today.isoformat(),
+        "summary": planner.summarize(scored),
+        "channel_mix": planner.summarize_channels(scored),
+        "high_impact_flags": planner.summarize_flags(scored),
+        "cohort_summary": planner.summarize_cohorts(scored),
+        "records": [planner.asdict(record) for record in scored],
+    }
+
+    dsn = planner.resolve_db_dsn()
+    if not dsn:
+        raise SystemExit("Database env vars missing. Set GS_DB_DSN or GS_DB_HOST/GS_DB_NAME/GS_DB_USER/GS_DB_PASSWORD.")
+
+    planner.write_run_to_db(
+        dsn=dsn,
+        schema=args.schema,
+        run_label=args.run_label,
+        args=argparse.Namespace(
+            input=args.input,
+            high_risk=70,
+            medium_risk=40,
+            soon_days=14,
+            limit=10,
+            cohort_limit=5,
+        ),
+        payload=payload,
+    )
+    print(f"Seeded sample data into schema '{args.schema}'.")
+
+
+if __name__ == "__main__":
+    main()

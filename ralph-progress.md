@@ -9,3 +9,8 @@
 - Added channel mix, high-impact flag counts, and cohort hotspot summaries to surface outreach coverage gaps.
 - Introduced a cohort summary limit flag and extended JSON output with the new aggregates.
 - Updated README with the new reporting features and option.
+
+## Iteration 33
+- Added optional Postgres persistence with schema-managed run + record tables and a CLI flag to store runs.
+- Created a seed script to populate production tables with sample data and documented the database workflow.
+- Expanded README with Postgres setup, env vars, and seeding instructions.

@@ -2,11 +2,13 @@
 import argparse
 import csv
 import json
+import os
 from dataclasses import dataclass, asdict
 from datetime import datetime, date, timedelta
 from typing import List, Optional, Dict, Tuple
 
 HIGH_IMPACT_FLAGS = {"crisis", "housing", "food", "health", "safety", "financial"}
+DEFAULT_DB_SCHEMA = "groupscholar_intervention_planner"
 
 
 @dataclass
@@ -367,7 +369,177 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--cohort-limit", type=int, default=5, help="Number of cohorts to list in hotspot summary")
     parser.add_argument("--today", help="Override today's date (YYYY-MM-DD)")
     parser.add_argument("--json", dest="json_path", help="Optional path to write JSON output")
+    parser.add_argument("--db-write", action="store_true", help="Write the run + records to Postgres")
+    parser.add_argument("--db-schema", default=DEFAULT_DB_SCHEMA, help="Postgres schema for planner tables")
+    parser.add_argument("--run-label", help="Optional label to tag the database run")
     return parser.parse_args()
+
+
+def resolve_db_dsn() -> Optional[str]:
+    explicit = os.getenv("GS_DB_DSN") or os.getenv("DATABASE_URL")
+    if explicit:
+        return explicit
+    host = os.getenv("GS_DB_HOST")
+    port = os.getenv("GS_DB_PORT", "5432")
+    name = os.getenv("GS_DB_NAME")
+    user = os.getenv("GS_DB_USER")
+    password = os.getenv("GS_DB_PASSWORD")
+    if not all([host, name, user, password]):
+        return None
+    sslmode = os.getenv("GS_DB_SSLMODE", "require")
+    return f"postgresql://{user}:{password}@{host}:{port}/{name}?sslmode={sslmode}"
+
+
+def require_psycopg() -> "module":
+    try:
+        import psycopg  # type: ignore
+    except ImportError as exc:
+        raise SystemExit("psycopg is required for --db-write. Install with: pip install psycopg[binary]") from exc
+    return psycopg
+
+
+def ensure_db(conn: "object", schema: str) -> None:
+    with conn.cursor() as cur:
+        cur.execute(f"CREATE SCHEMA IF NOT EXISTS {schema}")
+        cur.execute(
+            f"""
+            CREATE TABLE IF NOT EXISTS {schema}.runs (
+                id SERIAL PRIMARY KEY,
+                run_label TEXT,
+                generated_at TIMESTAMP NOT NULL,
+                today DATE NOT NULL,
+                input_path TEXT NOT NULL,
+                high_risk DOUBLE PRECISION NOT NULL,
+                medium_risk DOUBLE PRECISION NOT NULL,
+                soon_days INTEGER NOT NULL,
+                action_limit INTEGER NOT NULL,
+                cohort_limit INTEGER NOT NULL,
+                summary JSONB NOT NULL,
+                channel_mix JSONB NOT NULL,
+                high_impact_flags JSONB NOT NULL,
+                cohort_summary JSONB NOT NULL
+            )
+            """
+        )
+        cur.execute(
+            f"""
+            CREATE TABLE IF NOT EXISTS {schema}.run_records (
+                id SERIAL PRIMARY KEY,
+                run_id INTEGER NOT NULL REFERENCES {schema}.runs(id) ON DELETE CASCADE,
+                scholar_id TEXT NOT NULL,
+                name TEXT NOT NULL,
+                cohort TEXT NOT NULL,
+                channel_preference TEXT NOT NULL,
+                last_touch DATE,
+                risk_score DOUBLE PRECISION NOT NULL,
+                flags TEXT[] NOT NULL,
+                cadence_days INTEGER NOT NULL,
+                due_date DATE,
+                days_since_touch INTEGER,
+                status TEXT NOT NULL,
+                priority_score DOUBLE PRECISION NOT NULL,
+                recommended_action TEXT NOT NULL
+            )
+            """
+        )
+    conn.commit()
+
+
+def write_run_to_db(
+    dsn: str,
+    schema: str,
+    run_label: Optional[str],
+    args: argparse.Namespace,
+    payload: Dict[str, object],
+) -> None:
+    psycopg = require_psycopg()
+    with psycopg.connect(dsn) as conn:
+        ensure_db(conn, schema)
+        with conn.cursor() as cur:
+            generated_at = datetime.fromisoformat(str(payload["generated_at"]))
+            today_value = date.fromisoformat(str(payload["today"]))
+            cur.execute(
+                f"""
+                INSERT INTO {schema}.runs (
+                    run_label,
+                    generated_at,
+                    today,
+                    input_path,
+                    high_risk,
+                    medium_risk,
+                    soon_days,
+                    action_limit,
+                    cohort_limit,
+                    summary,
+                    channel_mix,
+                    high_impact_flags,
+                    cohort_summary
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                RETURNING id
+                """,
+                (
+                    run_label,
+                    generated_at,
+                    today_value,
+                    args.input,
+                    args.high_risk,
+                    args.medium_risk,
+                    args.soon_days,
+                    args.limit,
+                    args.cohort_limit,
+                    json.dumps(payload["summary"]),
+                    json.dumps(payload["channel_mix"]),
+                    json.dumps(payload["high_impact_flags"]),
+                    json.dumps(payload["cohort_summary"]),
+                ),
+            )
+            run_id = cur.fetchone()[0]
+            records = []
+            for record in payload["records"]:
+                last_touch = record["last_touch"]
+                due_date = record["due_date"]
+                records.append(
+                    (
+                        run_id,
+                        record["scholar_id"],
+                        record["name"],
+                        record["cohort"],
+                        record["channel_preference"],
+                        date.fromisoformat(last_touch) if last_touch else None,
+                        record["risk_score"],
+                        record["flags"],
+                        record["cadence_days"],
+                        date.fromisoformat(due_date) if due_date else None,
+                        record["days_since_touch"],
+                        record["status"],
+                        record["priority_score"],
+                        record["recommended_action"],
+                    )
+                )
+            cur.executemany(
+                f"""
+                INSERT INTO {schema}.run_records (
+                    run_id,
+                    scholar_id,
+                    name,
+                    cohort,
+                    channel_preference,
+                    last_touch,
+                    risk_score,
+                    flags,
+                    cadence_days,
+                    due_date,
+                    days_since_touch,
+                    status,
+                    priority_score,
+                    recommended_action
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                """,
+                records,
+            )
+        conn.commit()
 
 
 def main() -> None:
@@ -393,19 +565,27 @@ def main() -> None:
     print_action_queue(scored, args.limit)
     print_cadence_guidance()
 
+    payload = {
+        "generated_at": datetime.now().isoformat(timespec="seconds"),
+        "today": today.isoformat(),
+        "summary": summary,
+        "channel_mix": channel_mix,
+        "high_impact_flags": flag_counts,
+        "cohort_summary": cohorts,
+        "records": [asdict(record) for record in scored],
+    }
+
     if args.json_path:
-        payload = {
-            "generated_at": datetime.now().isoformat(timespec="seconds"),
-            "today": today.isoformat(),
-            "summary": summary,
-            "channel_mix": channel_mix,
-            "high_impact_flags": flag_counts,
-            "cohort_summary": cohorts,
-            "records": [asdict(record) for record in scored],
-        }
         with open(args.json_path, "w", encoding="utf-8") as handle:
             json.dump(payload, handle, indent=2)
         print(f"\nJSON report written to {args.json_path}")
+
+    if args.db_write:
+        dsn = resolve_db_dsn()
+        if not dsn:
+            raise SystemExit("Database env vars missing. Set GS_DB_DSN or GS_DB_HOST/GS_DB_NAME/GS_DB_USER/GS_DB_PASSWORD.")
+        write_run_to_db(dsn, args.db_schema, args.run_label, args, payload)
+        print(f"\nDatabase run stored in schema '{args.db_schema}'.")
 
 
 if __name__ == "__main__":
