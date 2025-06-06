@@ -39,6 +39,9 @@ def main() -> None:
         "channel_mix": planner.summarize_channels(scored),
         "high_impact_flags": planner.summarize_flags(scored),
         "cohort_summary": planner.summarize_cohorts(scored),
+        "owner_summary": planner.summarize_owners(scored),
+        "owner_queue": planner.build_owner_queue(scored, limit=5, size=3),
+        "channel_batches": planner.build_channel_batches(scored, limit=4, size=3),
         "records": [planner.asdict(record) for record in scored],
     }
 
@@ -57,6 +60,11 @@ def main() -> None:
             soon_days=14,
             limit=10,
             cohort_limit=5,
+            owner_limit=5,
+            owner_queue_limit=5,
+            owner_queue_size=3,
+            channel_batch_limit=4,
+            channel_batch_size=3,
         ),
         payload=payload,
     )

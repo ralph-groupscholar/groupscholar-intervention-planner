@@ -19,7 +19,17 @@
 - Updated the seed script to reuse the new validation + labeling helpers.
 - Reseeded the production database schema with the latest sample run.
 
+## Iteration 80
+- Added priority-reason tracking for each action so teams can explain why a scholar is ranked higher.
+- Introduced a `--explain` flag to show those reasons in the action queue output.
+- Updated README options/output notes for the new explain mode.
+
 ## Iteration 33
 - Added optional Postgres persistence with schema-managed run + record tables and a CLI flag to store runs.
 - Created a seed script to populate production tables with sample data and documented the database workflow.
 - Expanded README with Postgres setup, env vars, and seeding instructions.
+
+## Iteration 81
+- Added channel batch planning to group outreach actions by preferred channel with prioritized examples.
+- Persisted channel batch configuration/output in the JSON payload and Postgres runs schema.
+- Updated seed script and README with the new batch options and output notes.
