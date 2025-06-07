@@ -32,14 +32,23 @@ def main() -> None:
     run_label = args.run_label or planner.default_run_label(args.input, today)
     records = planner.load_csv(args.input)
     scored = planner.build_report(records, today, high=70, medium=40, soon_days=14)
+    owners = planner.summarize_owners(scored)
+    owner_alerts = planner.build_owner_alerts(
+        owners,
+        overdue_threshold=2,
+        no_touch_threshold=1,
+        total_threshold=8,
+    )
+    summary = planner.summarize(scored)
+    summary["owner_alerts"] = owner_alerts
     payload = {
         "generated_at": planner.datetime.now().isoformat(timespec="seconds"),
         "today": today.isoformat(),
-        "summary": planner.summarize(scored),
+        "summary": summary,
         "channel_mix": planner.summarize_channels(scored),
         "high_impact_flags": planner.summarize_flags(scored),
         "cohort_summary": planner.summarize_cohorts(scored),
-        "owner_summary": planner.summarize_owners(scored),
+        "owner_summary": owners,
         "owner_queue": planner.build_owner_queue(scored, limit=5, size=3),
         "channel_batches": planner.build_channel_batches(scored, limit=4, size=3),
         "records": [planner.asdict(record) for record in scored],

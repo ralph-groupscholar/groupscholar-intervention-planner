@@ -45,6 +45,9 @@ python3 intervention_planner.py \
 - `--owner-limit`: number of owners to list in the load summary (default: 5).
 - `--owner-queue-limit`: number of owners to show in the action queue (default: 5).
 - `--owner-queue-size`: number of actions to show per owner (default: 3).
+- `--owner-overdue-threshold`: overdue count to flag an owner in alerts (default: 2).
+- `--owner-no-touch-threshold`: no-touch count to flag an owner in alerts (default: 1).
+- `--owner-total-threshold`: total scholar count to flag an owner in alerts (default: 8).
 - `--channel-batch-limit`: number of channels to show in the batch plan (default: 4).
 - `--channel-batch-size`: number of actions to show per channel batch (default: 3).
 - `--today`: override today's date in `YYYY-MM-DD` format.
@@ -68,9 +71,11 @@ Required headers (case-insensitive):
 ## Output
 The CLI prints:
 - A summary of touchpoint status and risk tiers.
+- Overdue aging buckets and no-touch counts by risk tier.
 - Channel mix and high-impact flag highlights.
 - Cohort hotspot summary to target outreach coverage.
 - Owner load summary to balance staff coverage.
+- Owner alerts to flag overloaded caseloads or missing-touch hotspots.
 - Owner action queues to ensure each advisor has clear next steps.
 - Channel batch plan to coordinate outreach across preferred channels.
 - A priority action queue with recommended next steps.

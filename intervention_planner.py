@@ -412,6 +412,46 @@ def summarize_owners(scored: List[ScoredRecord]) -> List[Dict[str, object]]:
     )
 
 
+def build_owner_alerts(
+    owners: List[Dict[str, object]],
+    overdue_threshold: int,
+    no_touch_threshold: int,
+    total_threshold: int,
+) -> List[Dict[str, object]]:
+    alerts: List[Dict[str, object]] = []
+    for bucket in owners:
+        reasons = []
+        overdue = int(bucket["overdue"])
+        no_touch = int(bucket["no_touch"])
+        total = int(bucket["total"])
+        if overdue >= overdue_threshold:
+            reasons.append(f"overdue >= {overdue_threshold}")
+        if no_touch >= no_touch_threshold:
+            reasons.append(f"no-touch >= {no_touch_threshold}")
+        if total >= total_threshold:
+            reasons.append(f"total >= {total_threshold}")
+        if reasons:
+            alerts.append(
+                {
+                    "owner": bucket["owner"],
+                    "total": total,
+                    "overdue": overdue,
+                    "no_touch": no_touch,
+                    "avg_priority": float(bucket["avg_priority"]),
+                    "reasons": reasons,
+                }
+            )
+    return sorted(
+        alerts,
+        key=lambda item: (
+            -int(item["overdue"]),
+            -int(item["no_touch"]),
+            -int(item["total"]),
+            -float(item["avg_priority"]),
+        ),
+    )
+
+
 def build_owner_queue(scored: List[ScoredRecord], limit: int, size: int) -> List[Dict[str, object]]:
     buckets: Dict[str, Dict[str, object]] = {}
     for record in scored:
@@ -589,6 +629,20 @@ def print_owner_summary(owners: List[Dict[str, object]], limit: int) -> None:
         )
 
 
+def print_owner_alerts(alerts: List[Dict[str, object]]) -> None:
+    print("\nOwner Alerts")
+    print("------------")
+    if not alerts:
+        print("No owners currently exceed alert thresholds.")
+        return
+    for alert in alerts:
+        reasons = "; ".join(alert["reasons"])
+        print(
+            f"{alert['owner']}: total {alert['total']}, overdue {alert['overdue']}, "
+            f"no-touch {alert['no_touch']} -> {reasons}"
+        )
+
+
 def print_owner_queue(owner_queue: List[Dict[str, object]]) -> None:
     print("\nOwner Action Queue")
     print("------------------")
@@ -676,6 +730,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--owner-limit", type=int, default=5, help="Number of owners to list in load summary")
     parser.add_argument("--owner-queue-limit", type=int, default=5, help="Number of owners to show in the action queue")
     parser.add_argument("--owner-queue-size", type=int, default=3, help="Number of actions to show per owner")
+    parser.add_argument("--owner-overdue-threshold", type=int, default=2, help="Overdue count to flag an owner")
+    parser.add_argument("--owner-no-touch-threshold", type=int, default=1, help="No-touch count to flag an owner")
+    parser.add_argument("--owner-total-threshold", type=int, default=8, help="Total count to flag an owner")
     parser.add_argument("--channel-batch-limit", type=int, default=4, help="Number of channels to show in the batch plan")
     parser.add_argument("--channel-batch-size", type=int, default=3, help="Number of actions to show per channel batch")
     parser.add_argument("--today", help="Override today's date (YYYY-MM-DD)")
@@ -924,8 +981,16 @@ def main() -> None:
     flag_counts = summarize_flags(scored)
     cohorts = summarize_cohorts(scored)
     owners = summarize_owners(scored)
+    owner_alerts = build_owner_alerts(
+        owners,
+        overdue_threshold=args.owner_overdue_threshold,
+        no_touch_threshold=args.owner_no_touch_threshold,
+        total_threshold=args.owner_total_threshold,
+    )
     owner_queue = build_owner_queue(scored, args.owner_queue_limit, args.owner_queue_size)
     channel_batches = build_channel_batches(scored, args.channel_batch_limit, args.channel_batch_size)
+
+    summary["owner_alerts"] = owner_alerts
 
     print_summary(summary)
     print_overdue_aging(summary["overdue_aging"])
@@ -934,6 +999,7 @@ def main() -> None:
     print_flag_highlights(flag_counts)
     print_cohort_summary(cohorts, args.cohort_limit)
     print_owner_summary(owners, args.owner_limit)
+    print_owner_alerts(owner_alerts)
     print_owner_queue(owner_queue)
     print_channel_batches(channel_batches)
     print_action_queue(scored, args.limit, args.explain)

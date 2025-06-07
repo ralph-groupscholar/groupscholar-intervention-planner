@@ -1,5 +1,10 @@
 # Ralph Progress Log
 
+## Iteration 91
+- Added owner alert watchlists with overdue/no-touch/total thresholds to surface overloaded caseloads.
+- Wired owner alerts into CLI output and the JSON/DB summary payloads for reporting.
+- Updated README and seed workflow defaults for the new alert thresholds.
+
 ## Iteration 43
 - Seeded the production Postgres schema with sample intervention planner data.
 - Documented the DSN-based database option in the README.
