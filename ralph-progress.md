@@ -1,5 +1,10 @@
 # Ralph Progress Log
 
+## Iteration 18
+- Added owner touchpoint horizon summary to forecast upcoming advisor workloads.
+- Included owner horizon data in CLI output, JSON payloads, and database runs.
+- Added unit coverage for the owner horizon bucket logic and updated seed workflow.
+
 ## Iteration 91
 - Added owner alert watchlists with overdue/no-touch/total thresholds to surface overloaded caseloads.
 - Wired owner alerts into CLI output and the JSON/DB summary payloads for reporting.
@@ -38,3 +43,18 @@
 - Added channel batch planning to group outreach actions by preferred channel with prioritized examples.
 - Persisted channel batch configuration/output in the JSON payload and Postgres runs schema.
 - Updated seed script and README with the new batch options and output notes.
+
+## Iteration 92
+- Added touchpoint horizon buckets to summarize upcoming outreach windows.
+- Printed the new horizon summary in CLI output and included it in JSON/DB summary payloads.
+- Added unit coverage for the horizon bucketing logic and documented the test command.
+
+## Iteration 17
+- Added Postgres persistence for owner alerts and per-scholar priority reasons in run records.
+- Extended schema migrations to backfill new alert/reason columns with safe defaults.
+- Documented the new database payload coverage in the README.
+
+## Iteration 93
+- Added touchpoint forecast reporting with daily outreach counts and optional overdue inclusion.
+- Persisted touchpoint forecast data in JSON output and Postgres runs schema.
+- Added seed payload updates plus unit coverage for the forecast behavior.

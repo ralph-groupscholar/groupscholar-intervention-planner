@@ -31,8 +31,9 @@ def main() -> None:
     schema = planner.validate_schema_name(args.schema)
     run_label = args.run_label or planner.default_run_label(args.input, today)
     records = planner.load_csv(args.input)
-    scored = planner.build_report(records, today, high=70, medium=40, soon_days=14)
+    scored = planner.build_report(records, today, high=70, medium=40, soon_days=14, stale_days=60, stale_boost=15)
     owners = planner.summarize_owners(scored)
+    owner_horizon = planner.summarize_owner_horizon(scored)
     owner_alerts = planner.build_owner_alerts(
         owners,
         overdue_threshold=2,
@@ -41,6 +42,13 @@ def main() -> None:
     )
     summary = planner.summarize(scored)
     summary["owner_alerts"] = owner_alerts
+    touchpoint_forecast = planner.summarize_touchpoint_forecast(
+        scored,
+        today,
+        window_days=21,
+        include_overdue=True,
+    )
+    escalation_candidates = planner.build_escalation_list(scored, limit=5, min_score=90)
     payload = {
         "generated_at": planner.datetime.now().isoformat(timespec="seconds"),
         "today": today.isoformat(),
@@ -49,8 +57,11 @@ def main() -> None:
         "high_impact_flags": planner.summarize_flags(scored),
         "cohort_summary": planner.summarize_cohorts(scored),
         "owner_summary": owners,
+        "owner_horizon": owner_horizon,
         "owner_queue": planner.build_owner_queue(scored, limit=5, size=3),
+        "touchpoint_forecast": touchpoint_forecast,
         "channel_batches": planner.build_channel_batches(scored, limit=4, size=3),
+        "escalation_candidates": escalation_candidates,
         "records": [planner.asdict(record) for record in scored],
     }
 

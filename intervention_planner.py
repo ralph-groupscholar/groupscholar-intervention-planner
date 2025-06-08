@@ -44,6 +44,8 @@ class ScoredRecord:
     priority_score: float
     recommended_action: str
     priority_reasons: List[str]
+    stale_touch: bool
+    stale_days: Optional[int]
 
 
 def parse_date(value: str) -> Optional[date]:
@@ -112,11 +114,22 @@ def cadence_for_risk(score: float, high: float, medium: float) -> Tuple[str, int
     return "low", 45
 
 
-def compute_priority(record: ScholarRecord, today: date, high: float, medium: float, soon_days: int) -> ScoredRecord:
+def compute_priority(
+    record: ScholarRecord,
+    today: date,
+    high: float,
+    medium: float,
+    soon_days: int,
+    stale_days: int,
+    stale_boost: float,
+) -> ScoredRecord:
     tier, cadence_days = cadence_for_risk(record.risk_score, high, medium)
     reasons: List[str] = []
+    stale_touch = False
+    stale_days_value: Optional[int] = None
     if record.last_touch:
         days_since = (today - record.last_touch).days
+        stale_days_value = days_since
         due_date = record.last_touch + timedelta(days=cadence_days)
         due_delta = (due_date - today).days
         overdue = due_delta < 0
@@ -138,6 +151,10 @@ def compute_priority(record: ScholarRecord, today: date, high: float, medium: fl
     if record.last_touch is None:
         priority += 25
         reasons.append("no previous touch")
+    if record.last_touch and stale_days_value is not None and stale_days_value >= stale_days:
+        priority += stale_boost
+        stale_touch = True
+        reasons.append(f"stale last touch ({stale_days_value} days)")
     if overdue:
         priority += 30
         reasons.append(f"overdue by {overdue_days} days")
@@ -180,6 +197,8 @@ def compute_priority(record: ScholarRecord, today: date, high: float, medium: fl
         priority_score=round(priority, 2),
         recommended_action=recommended_action,
         priority_reasons=reasons,
+        stale_touch=stale_touch,
+        stale_days=stale_days_value if stale_touch else None,
     )
 
 
@@ -223,6 +242,7 @@ def summarize(scored: List[ScoredRecord]) -> Dict[str, object]:
         "high_risk": 0,
         "medium_risk": 0,
         "low_risk": 0,
+        "stale_touch": 0,
     }
     for record in scored:
         if record.status == "overdue":
@@ -240,8 +260,12 @@ def summarize(scored: List[ScoredRecord]) -> Dict[str, object]:
             summary["medium_risk"] += 1
         else:
             summary["low_risk"] += 1
+        if record.stale_touch:
+            summary["stale_touch"] += 1
     summary["overdue_aging"] = summarize_overdue_aging(scored)
     summary["no_touch_by_risk"] = summarize_no_touch_by_risk(scored)
+    summary["touchpoint_horizon"] = summarize_touchpoint_horizon(scored)
+    summary["stale_touch_by_risk"] = summarize_stale_touch_by_risk(scored)
     return summary
 
 
@@ -274,6 +298,135 @@ def summarize_no_touch_by_risk(scored: List[ScoredRecord]) -> Dict[str, int]:
     counts = {"high": 0, "medium": 0, "low": 0}
     for record in scored:
         if record.status != "no-touch":
+            continue
+        if record.cadence_days == 7:
+            counts["high"] += 1
+        elif record.cadence_days == 21:
+            counts["medium"] += 1
+        else:
+            counts["low"] += 1
+    return counts
+
+
+def summarize_touchpoint_horizon(scored: List[ScoredRecord]) -> Dict[str, int]:
+    buckets = {
+        "overdue": 0,
+        "next_7_days": 0,
+        "next_14_days": 0,
+        "next_30_days": 0,
+        "later": 0,
+        "no_due_date": 0,
+    }
+    for record in scored:
+        due_in_days = record.due_in_days
+        if due_in_days is None:
+            buckets["no_due_date"] += 1
+        elif due_in_days < 0:
+            buckets["overdue"] += 1
+        elif due_in_days <= 7:
+            buckets["next_7_days"] += 1
+        elif due_in_days <= 14:
+            buckets["next_14_days"] += 1
+        elif due_in_days <= 30:
+            buckets["next_30_days"] += 1
+        else:
+            buckets["later"] += 1
+    return buckets
+
+
+def summarize_owner_horizon(scored: List[ScoredRecord]) -> List[Dict[str, object]]:
+    owners: Dict[str, Dict[str, object]] = {}
+    for record in scored:
+        owner = normalize_owner(record.owner)
+        bucket = owners.setdefault(
+            owner,
+            {
+                "owner": owner,
+                "total": 0,
+                "overdue": 0,
+                "next_7_days": 0,
+                "next_14_days": 0,
+                "next_30_days": 0,
+                "later": 0,
+                "no_due_date": 0,
+                "avg_priority": 0.0,
+            },
+        )
+        bucket["total"] = int(bucket["total"]) + 1
+        bucket["avg_priority"] = round(
+            (float(bucket["avg_priority"]) * (int(bucket["total"]) - 1) + record.priority_score) / int(bucket["total"]),
+            2,
+        )
+        due_in_days = record.due_in_days
+        if due_in_days is None:
+            bucket["no_due_date"] = int(bucket["no_due_date"]) + 1
+        elif due_in_days < 0:
+            bucket["overdue"] = int(bucket["overdue"]) + 1
+        elif due_in_days <= 7:
+            bucket["next_7_days"] = int(bucket["next_7_days"]) + 1
+        elif due_in_days <= 14:
+            bucket["next_14_days"] = int(bucket["next_14_days"]) + 1
+        elif due_in_days <= 30:
+            bucket["next_30_days"] = int(bucket["next_30_days"]) + 1
+        else:
+            bucket["later"] = int(bucket["later"]) + 1
+
+    return sorted(
+        owners.values(),
+        key=lambda item: (
+            -int(item["overdue"]),
+            -int(item["next_7_days"]),
+            -int(item["next_14_days"]),
+            -int(item["total"]),
+            -float(item["avg_priority"]),
+        ),
+    )
+
+
+def summarize_touchpoint_forecast(
+    scored: List[ScoredRecord],
+    today: date,
+    window_days: int,
+    include_overdue: bool,
+) -> Dict[str, object]:
+    window_days = max(1, int(window_days))
+    daily_counts = [0 for _ in range(window_days + 1)]
+    overdue = 0
+    no_due_date = 0
+    beyond_window = 0
+    for record in scored:
+        due_in_days = record.due_in_days
+        if due_in_days is None:
+            no_due_date += 1
+            continue
+        if due_in_days < 0:
+            overdue += 1
+            if include_overdue:
+                daily_counts[0] += 1
+            continue
+        if due_in_days <= window_days:
+            daily_counts[due_in_days] += 1
+        else:
+            beyond_window += 1
+
+    daily = [
+        {"date": (today + timedelta(days=offset)).isoformat(), "count": count}
+        for offset, count in enumerate(daily_counts)
+    ]
+    return {
+        "window_days": window_days,
+        "include_overdue": include_overdue,
+        "overdue": overdue,
+        "no_due_date": no_due_date,
+        "beyond_window": beyond_window,
+        "daily": daily,
+    }
+
+
+def summarize_stale_touch_by_risk(scored: List[ScoredRecord]) -> Dict[str, int]:
+    counts = {"high": 0, "medium": 0, "low": 0}
+    for record in scored:
+        if not record.stale_touch:
             continue
         if record.cadence_days == 7:
             counts["high"] += 1
@@ -543,6 +696,34 @@ def build_channel_batches(scored: List[ScoredRecord], limit: int, size: int) -> 
     return ordered[:limit]
 
 
+def build_escalation_list(scored: List[ScoredRecord], limit: int, min_score: float) -> List[Dict[str, object]]:
+    candidates: List[Dict[str, object]] = []
+    for record in scored:
+        if record.cadence_days != 7:
+            continue
+        if record.status not in {"overdue", "no-touch"}:
+            continue
+        if record.priority_score < min_score:
+            continue
+        candidates.append(
+            {
+                "scholar_id": record.scholar_id,
+                "name": record.name,
+                "cohort": record.cohort,
+                "owner": record.owner,
+                "status": record.status,
+                "risk_score": record.risk_score,
+                "priority_score": record.priority_score,
+                "last_touch": record.last_touch,
+                "due_date": record.due_date,
+                "priority_reasons": record.priority_reasons,
+                "recommended_action": record.recommended_action,
+            }
+        )
+    candidates.sort(key=lambda item: (-float(item["priority_score"]), item["name"]))
+    return candidates[:limit]
+
+
 def print_summary(summary: Dict[str, object]) -> None:
     print("\nIntervention Summary")
     print("--------------------")
@@ -554,6 +735,7 @@ def print_summary(summary: Dict[str, object]) -> None:
     print(f"Due soon: {summary['due_soon']}")
     print(f"On track: {summary['on_track']}")
     print(f"No prior touch: {summary['no_touch']}")
+    print(f"Stale last touch: {summary['stale_touch']}")
 
 
 def print_overdue_aging(overdue_aging: Dict[str, int]) -> None:
@@ -575,6 +757,52 @@ def print_no_touch_by_risk(no_touch: Dict[str, int]) -> None:
     print(f"High risk: {no_touch.get('high', 0)}")
     print(f"Medium risk: {no_touch.get('medium', 0)}")
     print(f"Low risk: {no_touch.get('low', 0)}")
+
+
+def print_touchpoint_horizon(horizon: Dict[str, int]) -> None:
+    print("\nTouchpoint Horizon")
+    print("------------------")
+    if not horizon:
+        print("No touchpoint horizon data.")
+        return
+    print(f"Overdue: {horizon.get('overdue', 0)}")
+    print(f"Next 7 days: {horizon.get('next_7_days', 0)}")
+    print(f"Next 14 days: {horizon.get('next_14_days', 0)}")
+    print(f"Next 30 days: {horizon.get('next_30_days', 0)}")
+    print(f"Later: {horizon.get('later', 0)}")
+    print(f"No due date: {horizon.get('no_due_date', 0)}")
+
+
+def print_touchpoint_forecast(forecast: Dict[str, object]) -> None:
+    print("\nTouchpoint Forecast")
+    print("-------------------")
+    if not forecast:
+        print("No touchpoint forecast data.")
+        return
+    window_days = int(forecast.get("window_days", 0))
+    include_overdue = bool(forecast.get("include_overdue", False))
+    overdue = int(forecast.get("overdue", 0))
+    no_due_date = int(forecast.get("no_due_date", 0))
+    beyond_window = int(forecast.get("beyond_window", 0))
+    daily = forecast.get("daily", [])
+    print(f"Window: next {window_days} days")
+    print(f"Overdue touches: {overdue} ({'included' if include_overdue else 'excluded'} in day 0)")
+    print(f"No due date: {no_due_date}")
+    print(f"Beyond window: {beyond_window}")
+    print("Daily load:")
+    for item in daily:
+        print(f"  {item['date']}: {item['count']}")
+
+
+def print_stale_touch_by_risk(stale_touch: Dict[str, int]) -> None:
+    print("\nStale Touches by Risk")
+    print("---------------------")
+    if not stale_touch:
+        print("No stale-touch data.")
+        return
+    print(f"High risk: {stale_touch.get('high', 0)}")
+    print(f"Medium risk: {stale_touch.get('medium', 0)}")
+    print(f"Low risk: {stale_touch.get('low', 0)}")
 
 
 def print_channel_mix(mix: Dict[str, int]) -> None:
@@ -626,6 +854,26 @@ def print_owner_summary(owners: List[Dict[str, object]], limit: int) -> None:
         print(
             f"{bucket['owner'][:18]:<18} {bucket['total']:>5} {bucket['overdue']:>7} "
             f"{bucket['due_soon']:>7} {bucket['no_touch']:>7} {bucket['avg_priority']:>9.1f}"
+        )
+
+
+def print_owner_horizon(owners: List[Dict[str, object]], limit: int) -> None:
+    print("\nOwner Touchpoint Horizon")
+    print("-------------------------")
+    if not owners:
+        print("No owner horizon data available.")
+        return
+    header = (
+        f"{'Owner':<18} {'Overdue':>7} {'Next7':>6} {'Next14':>6} "
+        f"{'Next30':>6} {'Later':>5} {'NoDue':>5} {'AvgScore':>9}"
+    )
+    print(header)
+    print("-" * len(header))
+    for bucket in owners[:limit]:
+        print(
+            f"{bucket['owner'][:18]:<18} {bucket['overdue']:>7} {bucket['next_7_days']:>6} "
+            f"{bucket['next_14_days']:>6} {bucket['next_30_days']:>6} {bucket['later']:>5} "
+            f"{bucket['no_due_date']:>5} {bucket['avg_priority']:>9.1f}"
         )
 
 
@@ -681,6 +929,24 @@ def print_channel_batches(channel_batches: List[Dict[str, object]]) -> None:
             print(f"       -> {item['recommended_action']}")
 
 
+def print_escalation_list(escalations: List[Dict[str, object]]) -> None:
+    print("\nEscalation Candidates")
+    print("---------------------")
+    if not escalations:
+        print("No escalation candidates based on current thresholds.")
+        return
+    for item in escalations:
+        due = item["due_date"] or "-"
+        reasons = "; ".join(item.get("priority_reasons", []))
+        print(
+            f"{item['priority_score']:6.1f}  {item['name'][:20]:<20} {item['owner'][:14]:<14} "
+            f"{item['status']:<9} {due:<10}"
+        )
+        print(f"      -> {item['recommended_action']}")
+        if reasons:
+            print(f"      -> Reasons: {reasons}")
+
+
 def print_action_queue(scored: List[ScoredRecord], limit: int, explain: bool) -> None:
     print("\nPriority Action Queue")
     print("---------------------")
@@ -711,8 +977,16 @@ def print_cadence_guidance() -> None:
     print("Low risk: touch every 45 days")
 
 
-def build_report(records: List[ScholarRecord], today: date, high: float, medium: float, soon_days: int) -> List[ScoredRecord]:
-    scored = [compute_priority(record, today, high, medium, soon_days) for record in records]
+def build_report(
+    records: List[ScholarRecord],
+    today: date,
+    high: float,
+    medium: float,
+    soon_days: int,
+    stale_days: int,
+    stale_boost: float,
+) -> List[ScoredRecord]:
+    scored = [compute_priority(record, today, high, medium, soon_days, stale_days, stale_boost) for record in records]
     scored.sort(key=lambda item: item.priority_score, reverse=True)
     return scored
 
@@ -735,6 +1009,26 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--owner-total-threshold", type=int, default=8, help="Total count to flag an owner")
     parser.add_argument("--channel-batch-limit", type=int, default=4, help="Number of channels to show in the batch plan")
     parser.add_argument("--channel-batch-size", type=int, default=3, help="Number of actions to show per channel batch")
+    parser.add_argument("--escalation-limit", type=int, default=5, help="Number of escalation candidates to show")
+    parser.add_argument(
+        "--escalation-min-score",
+        type=float,
+        default=90,
+        help="Minimum priority score for escalation candidates",
+    )
+    parser.add_argument(
+        "--forecast-window-days",
+        type=int,
+        default=21,
+        help="Days ahead to include in the touchpoint forecast",
+    )
+    parser.add_argument(
+        "--forecast-include-overdue",
+        action="store_true",
+        help="Include overdue touches in the forecast day 0 count",
+    )
+    parser.add_argument("--stale-days", type=int, default=60, help="Days since last touch to flag as stale")
+    parser.add_argument("--stale-boost", type=float, default=15, help="Priority boost for stale last-touch records")
     parser.add_argument("--today", help="Override today's date (YYYY-MM-DD)")
     parser.add_argument("--json", dest="json_path", help="Optional path to write JSON output")
     parser.add_argument("--explain", action="store_true", help="Show priority reasons in the action queue")
@@ -789,10 +1083,14 @@ def ensure_db(conn: "object", schema: str) -> None:
                 high_impact_flags JSONB NOT NULL,
                 cohort_summary JSONB NOT NULL,
                 owner_summary JSONB NOT NULL,
+                owner_horizon JSONB NOT NULL,
                 owner_queue JSONB NOT NULL,
+                owner_alerts JSONB NOT NULL,
+                touchpoint_forecast JSONB NOT NULL,
                 channel_batch_limit INTEGER NOT NULL,
                 channel_batch_size INTEGER NOT NULL,
-                channel_batches JSONB NOT NULL
+                channel_batches JSONB NOT NULL,
+                escalation_candidates JSONB NOT NULL
             )
             """
         )
@@ -816,7 +1114,10 @@ def ensure_db(conn: "object", schema: str) -> None:
                 overdue_days INTEGER,
                 status TEXT NOT NULL,
                 priority_score DOUBLE PRECISION NOT NULL,
-                recommended_action TEXT NOT NULL
+                priority_reasons TEXT[] NOT NULL,
+                recommended_action TEXT NOT NULL,
+                stale_touch BOOLEAN NOT NULL DEFAULT FALSE,
+                stale_days INTEGER
             )
             """
         )
@@ -827,7 +1128,13 @@ def ensure_db(conn: "object", schema: str) -> None:
             f"ALTER TABLE {schema}.runs ADD COLUMN IF NOT EXISTS owner_summary JSONB NOT NULL DEFAULT '{{}}'::jsonb"
         )
         cur.execute(
+            f"ALTER TABLE {schema}.runs ADD COLUMN IF NOT EXISTS owner_horizon JSONB NOT NULL DEFAULT '[]'::jsonb"
+        )
+        cur.execute(
             f"ALTER TABLE {schema}.runs ADD COLUMN IF NOT EXISTS owner_queue JSONB NOT NULL DEFAULT '[]'::jsonb"
+        )
+        cur.execute(
+            f"ALTER TABLE {schema}.runs ADD COLUMN IF NOT EXISTS owner_alerts JSONB NOT NULL DEFAULT '[]'::jsonb"
         )
         cur.execute(
             f"ALTER TABLE {schema}.runs ADD COLUMN IF NOT EXISTS channel_batch_limit INTEGER NOT NULL DEFAULT 0"
@@ -839,6 +1146,12 @@ def ensure_db(conn: "object", schema: str) -> None:
             f"ALTER TABLE {schema}.runs ADD COLUMN IF NOT EXISTS channel_batches JSONB NOT NULL DEFAULT '[]'::jsonb"
         )
         cur.execute(
+            f"ALTER TABLE {schema}.runs ADD COLUMN IF NOT EXISTS escalation_candidates JSONB NOT NULL DEFAULT '[]'::jsonb"
+        )
+        cur.execute(
+            f"ALTER TABLE {schema}.runs ADD COLUMN IF NOT EXISTS touchpoint_forecast JSONB NOT NULL DEFAULT '{{}}'::jsonb"
+        )
+        cur.execute(
             f"ALTER TABLE {schema}.run_records ADD COLUMN IF NOT EXISTS owner TEXT NOT NULL DEFAULT 'Unassigned'"
         )
         cur.execute(
@@ -846,6 +1159,15 @@ def ensure_db(conn: "object", schema: str) -> None:
         )
         cur.execute(
             f"ALTER TABLE {schema}.run_records ADD COLUMN IF NOT EXISTS overdue_days INTEGER"
+        )
+        cur.execute(
+            f"ALTER TABLE {schema}.run_records ADD COLUMN IF NOT EXISTS priority_reasons TEXT[] NOT NULL DEFAULT '{{}}'::text[]"
+        )
+        cur.execute(
+            f"ALTER TABLE {schema}.run_records ADD COLUMN IF NOT EXISTS stale_touch BOOLEAN NOT NULL DEFAULT FALSE"
+        )
+        cur.execute(
+            f"ALTER TABLE {schema}.run_records ADD COLUMN IF NOT EXISTS stale_days INTEGER"
         )
     conn.commit()
 
@@ -873,22 +1195,26 @@ def write_run_to_db(
                     high_risk,
                     medium_risk,
                     soon_days,
-                action_limit,
-                cohort_limit,
-                owner_limit,
-                channel_batch_limit,
-                channel_batch_size,
-                summary,
-                channel_mix,
-                high_impact_flags,
-                cohort_summary,
-                owner_summary,
-                owner_queue,
-                channel_batches
-            )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-            RETURNING id
-            """,
+                    action_limit,
+                    cohort_limit,
+                    owner_limit,
+                    channel_batch_limit,
+                    channel_batch_size,
+                    summary,
+                    channel_mix,
+                    high_impact_flags,
+                    cohort_summary,
+                    owner_summary,
+                    owner_horizon,
+                    owner_queue,
+                    owner_alerts,
+                    touchpoint_forecast,
+                    channel_batches,
+                    escalation_candidates
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                RETURNING id
+                """,
             (
                 run_label,
                 generated_at,
@@ -907,8 +1233,12 @@ def write_run_to_db(
                 json.dumps(payload["high_impact_flags"]),
                 json.dumps(payload["cohort_summary"]),
                 json.dumps(payload["owner_summary"]),
+                json.dumps(payload["owner_horizon"]),
                 json.dumps(payload["owner_queue"]),
+                json.dumps(payload["summary"].get("owner_alerts", [])),
+                json.dumps(payload["touchpoint_forecast"]),
                 json.dumps(payload["channel_batches"]),
+                json.dumps(payload["escalation_candidates"]),
             ),
         )
             run_id = cur.fetchone()[0]
@@ -934,7 +1264,10 @@ def write_run_to_db(
                         record["overdue_days"],
                         record["status"],
                         record["priority_score"],
+                        record.get("priority_reasons", []),
                         record["recommended_action"],
+                        record.get("stale_touch", False),
+                        record.get("stale_days"),
                     )
                 )
             cur.executemany(
@@ -956,9 +1289,12 @@ def write_run_to_db(
                     overdue_days,
                     status,
                     priority_score,
-                    recommended_action
+                    priority_reasons,
+                    recommended_action,
+                    stale_touch,
+                    stale_days
                 )
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 records,
             )
@@ -975,12 +1311,21 @@ def main() -> None:
         today = parsed
 
     records = load_csv(args.input)
-    scored = build_report(records, today, args.high_risk, args.medium_risk, args.soon_days)
+    scored = build_report(
+        records,
+        today,
+        args.high_risk,
+        args.medium_risk,
+        args.soon_days,
+        args.stale_days,
+        args.stale_boost,
+    )
     summary = summarize(scored)
     channel_mix = summarize_channels(scored)
     flag_counts = summarize_flags(scored)
     cohorts = summarize_cohorts(scored)
     owners = summarize_owners(scored)
+    owner_horizon = summarize_owner_horizon(scored)
     owner_alerts = build_owner_alerts(
         owners,
         overdue_threshold=args.owner_overdue_threshold,
@@ -989,19 +1334,31 @@ def main() -> None:
     )
     owner_queue = build_owner_queue(scored, args.owner_queue_limit, args.owner_queue_size)
     channel_batches = build_channel_batches(scored, args.channel_batch_limit, args.channel_batch_size)
+    escalation_candidates = build_escalation_list(scored, args.escalation_limit, args.escalation_min_score)
+    touchpoint_forecast = summarize_touchpoint_forecast(
+        scored,
+        today,
+        args.forecast_window_days,
+        args.forecast_include_overdue,
+    )
 
     summary["owner_alerts"] = owner_alerts
 
     print_summary(summary)
     print_overdue_aging(summary["overdue_aging"])
     print_no_touch_by_risk(summary["no_touch_by_risk"])
+    print_touchpoint_horizon(summary["touchpoint_horizon"])
+    print_touchpoint_forecast(touchpoint_forecast)
+    print_stale_touch_by_risk(summary["stale_touch_by_risk"])
     print_channel_mix(channel_mix)
     print_flag_highlights(flag_counts)
     print_cohort_summary(cohorts, args.cohort_limit)
     print_owner_summary(owners, args.owner_limit)
+    print_owner_horizon(owner_horizon, args.owner_limit)
     print_owner_alerts(owner_alerts)
     print_owner_queue(owner_queue)
     print_channel_batches(channel_batches)
+    print_escalation_list(escalation_candidates)
     print_action_queue(scored, args.limit, args.explain)
     print_cadence_guidance()
 
@@ -1013,8 +1370,11 @@ def main() -> None:
         "high_impact_flags": flag_counts,
         "cohort_summary": cohorts,
         "owner_summary": owners,
+        "owner_horizon": owner_horizon,
         "owner_queue": owner_queue,
+        "touchpoint_forecast": touchpoint_forecast,
         "channel_batches": channel_batches,
+        "escalation_candidates": escalation_candidates,
         "records": [asdict(record) for record in scored],
     }
 
