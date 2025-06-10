@@ -1,5 +1,15 @@
 # Ralph Progress Log
 
+## Iteration 22
+- Added status-by-risk tier breakdown to highlight overdue/due-soon/on-track/no-touch mix per tier.
+- Printed the new risk-tier status table in CLI output and embedded it in JSON/DB summaries.
+- Fixed Postgres insert placeholder counts and reseeded the production schema.
+
+## Iteration 20
+- Added owner capacity planning to size near-term workload vs. daily outreach capacity.
+- Persisted owner capacity data in JSON/DB payloads and wired CLI output/reporting.
+- Added unit coverage and updated seed payload + README options for capacity planning.
+
 ## Iteration 18
 - Added owner touchpoint horizon summary to forecast upcoming advisor workloads.
 - Included owner horizon data in CLI output, JSON payloads, and database runs.

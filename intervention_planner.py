@@ -264,6 +264,7 @@ def summarize(scored: List[ScoredRecord]) -> Dict[str, object]:
             summary["stale_touch"] += 1
     summary["overdue_aging"] = summarize_overdue_aging(scored)
     summary["no_touch_by_risk"] = summarize_no_touch_by_risk(scored)
+    summary["status_by_risk"] = summarize_status_by_risk(scored)
     summary["touchpoint_horizon"] = summarize_touchpoint_horizon(scored)
     summary["stale_touch_by_risk"] = summarize_stale_touch_by_risk(scored)
     return summary
@@ -306,6 +307,31 @@ def summarize_no_touch_by_risk(scored: List[ScoredRecord]) -> Dict[str, int]:
         else:
             counts["low"] += 1
     return counts
+
+
+def summarize_status_by_risk(scored: List[ScoredRecord]) -> Dict[str, Dict[str, int]]:
+    buckets = {
+        "high": {"overdue": 0, "due_soon": 0, "on_track": 0, "no_touch": 0},
+        "medium": {"overdue": 0, "due_soon": 0, "on_track": 0, "no_touch": 0},
+        "low": {"overdue": 0, "due_soon": 0, "on_track": 0, "no_touch": 0},
+    }
+    status_map = {
+        "overdue": "overdue",
+        "due-soon": "due_soon",
+        "on-track": "on_track",
+        "no-touch": "no_touch",
+    }
+    for record in scored:
+        if record.cadence_days == 7:
+            tier = "high"
+        elif record.cadence_days == 21:
+            tier = "medium"
+        else:
+            tier = "low"
+        mapped = status_map.get(record.status)
+        if mapped:
+            buckets[tier][mapped] += 1
+    return buckets
 
 
 def summarize_touchpoint_horizon(scored: List[ScoredRecord]) -> Dict[str, int]:
@@ -421,6 +447,61 @@ def summarize_touchpoint_forecast(
         "beyond_window": beyond_window,
         "daily": daily,
     }
+
+
+def summarize_owner_capacity(
+    scored: List[ScoredRecord],
+    window_days: int,
+    daily_capacity: int,
+    include_overdue: bool,
+) -> List[Dict[str, object]]:
+    window_days = max(1, int(window_days))
+    daily_capacity = max(0, int(daily_capacity))
+    buckets: Dict[str, Dict[str, object]] = {}
+    for record in scored:
+        owner = normalize_owner(record.owner)
+        bucket = buckets.setdefault(
+            owner,
+            {
+                "owner": owner,
+                "due_within_window": 0,
+                "overdue": 0,
+                "capacity": daily_capacity * window_days,
+                "utilization": 0.0,
+                "gap": 0,
+                "window_days": window_days,
+                "daily_capacity": daily_capacity,
+            },
+        )
+        due_in_days = record.due_in_days
+        if due_in_days is None:
+            continue
+        if due_in_days < 0:
+            bucket["overdue"] = int(bucket["overdue"]) + 1
+            if include_overdue:
+                bucket["due_within_window"] = int(bucket["due_within_window"]) + 1
+            continue
+        if due_in_days <= window_days:
+            bucket["due_within_window"] = int(bucket["due_within_window"]) + 1
+
+    for bucket in buckets.values():
+        capacity = int(bucket["capacity"])
+        due_within = int(bucket["due_within_window"])
+        bucket["gap"] = max(0, due_within - capacity)
+        if capacity > 0:
+            bucket["utilization"] = round(due_within / capacity, 2)
+        else:
+            bucket["utilization"] = 0.0
+
+    return sorted(
+        buckets.values(),
+        key=lambda item: (
+            -int(item["gap"]),
+            -int(item["overdue"]),
+            -int(item["due_within_window"]),
+            item["owner"],
+        ),
+    )
 
 
 def summarize_stale_touch_by_risk(scored: List[ScoredRecord]) -> Dict[str, int]:
@@ -759,6 +840,23 @@ def print_no_touch_by_risk(no_touch: Dict[str, int]) -> None:
     print(f"Low risk: {no_touch.get('low', 0)}")
 
 
+def print_status_by_risk(status_by_risk: Dict[str, Dict[str, int]]) -> None:
+    print("\nStatus by Risk Tier")
+    print("-------------------")
+    if not status_by_risk:
+        print("No risk-tier status data.")
+        return
+    header = f"{'Risk':<8} {'Overdue':>7} {'DueSoon':>7} {'OnTrack':>7} {'NoTouch':>7}"
+    print(header)
+    print("-" * len(header))
+    for tier in ("high", "medium", "low"):
+        bucket = status_by_risk.get(tier, {})
+        print(
+            f"{tier:<8} {bucket.get('overdue', 0):>7} {bucket.get('due_soon', 0):>7} "
+            f"{bucket.get('on_track', 0):>7} {bucket.get('no_touch', 0):>7}"
+        )
+
+
 def print_touchpoint_horizon(horizon: Dict[str, int]) -> None:
     print("\nTouchpoint Horizon")
     print("------------------")
@@ -792,6 +890,25 @@ def print_touchpoint_forecast(forecast: Dict[str, object]) -> None:
     print("Daily load:")
     for item in daily:
         print(f"  {item['date']}: {item['count']}")
+
+
+def print_owner_capacity(capacity: List[Dict[str, object]]) -> None:
+    print("\nOwner Capacity Plan")
+    print("-------------------")
+    if not capacity:
+        print("No owner capacity data available.")
+        return
+    header = (
+        f"{'Owner':<18} {'DueWin':>7} {'Overdue':>7} {'Capacity':>9} "
+        f"{'Util':>6} {'Gap':>5}"
+    )
+    print(header)
+    print("-" * len(header))
+    for bucket in capacity:
+        print(
+            f"{bucket['owner'][:18]:<18} {bucket['due_within_window']:>7} {bucket['overdue']:>7} "
+            f"{bucket['capacity']:>9} {bucket['utilization']:>6.2f} {bucket['gap']:>5}"
+        )
 
 
 def print_stale_touch_by_risk(stale_touch: Dict[str, int]) -> None:
@@ -1027,6 +1144,23 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Include overdue touches in the forecast day 0 count",
     )
+    parser.add_argument(
+        "--owner-capacity-window-days",
+        type=int,
+        default=7,
+        help="Window (days) to size owner capacity planning",
+    )
+    parser.add_argument(
+        "--owner-daily-capacity",
+        type=int,
+        default=3,
+        help="Expected daily touch capacity per owner",
+    )
+    parser.add_argument(
+        "--owner-capacity-exclude-overdue",
+        action="store_true",
+        help="Exclude overdue touches from owner capacity counts",
+    )
     parser.add_argument("--stale-days", type=int, default=60, help="Days since last touch to flag as stale")
     parser.add_argument("--stale-boost", type=float, default=15, help="Priority boost for stale last-touch records")
     parser.add_argument("--today", help="Override today's date (YYYY-MM-DD)")
@@ -1084,6 +1218,7 @@ def ensure_db(conn: "object", schema: str) -> None:
                 cohort_summary JSONB NOT NULL,
                 owner_summary JSONB NOT NULL,
                 owner_horizon JSONB NOT NULL,
+                owner_capacity JSONB NOT NULL,
                 owner_queue JSONB NOT NULL,
                 owner_alerts JSONB NOT NULL,
                 touchpoint_forecast JSONB NOT NULL,
@@ -1129,6 +1264,9 @@ def ensure_db(conn: "object", schema: str) -> None:
         )
         cur.execute(
             f"ALTER TABLE {schema}.runs ADD COLUMN IF NOT EXISTS owner_horizon JSONB NOT NULL DEFAULT '[]'::jsonb"
+        )
+        cur.execute(
+            f"ALTER TABLE {schema}.runs ADD COLUMN IF NOT EXISTS owner_capacity JSONB NOT NULL DEFAULT '[]'::jsonb"
         )
         cur.execute(
             f"ALTER TABLE {schema}.runs ADD COLUMN IF NOT EXISTS owner_queue JSONB NOT NULL DEFAULT '[]'::jsonb"
@@ -1206,13 +1344,14 @@ def write_run_to_db(
                     cohort_summary,
                     owner_summary,
                     owner_horizon,
+                    owner_capacity,
                     owner_queue,
                     owner_alerts,
                     touchpoint_forecast,
                     channel_batches,
                     escalation_candidates
                 )
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 RETURNING id
                 """,
             (
@@ -1234,6 +1373,7 @@ def write_run_to_db(
                 json.dumps(payload["cohort_summary"]),
                 json.dumps(payload["owner_summary"]),
                 json.dumps(payload["owner_horizon"]),
+                json.dumps(payload["owner_capacity"]),
                 json.dumps(payload["owner_queue"]),
                 json.dumps(payload["summary"].get("owner_alerts", [])),
                 json.dumps(payload["touchpoint_forecast"]),
@@ -1294,7 +1434,7 @@ def write_run_to_db(
                     stale_touch,
                     stale_days
                 )
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 records,
             )
@@ -1326,6 +1466,12 @@ def main() -> None:
     cohorts = summarize_cohorts(scored)
     owners = summarize_owners(scored)
     owner_horizon = summarize_owner_horizon(scored)
+    owner_capacity = summarize_owner_capacity(
+        scored,
+        args.owner_capacity_window_days,
+        args.owner_daily_capacity,
+        include_overdue=not args.owner_capacity_exclude_overdue,
+    )
     owner_alerts = build_owner_alerts(
         owners,
         overdue_threshold=args.owner_overdue_threshold,
@@ -1347,6 +1493,7 @@ def main() -> None:
     print_summary(summary)
     print_overdue_aging(summary["overdue_aging"])
     print_no_touch_by_risk(summary["no_touch_by_risk"])
+    print_status_by_risk(summary["status_by_risk"])
     print_touchpoint_horizon(summary["touchpoint_horizon"])
     print_touchpoint_forecast(touchpoint_forecast)
     print_stale_touch_by_risk(summary["stale_touch_by_risk"])
@@ -1355,6 +1502,7 @@ def main() -> None:
     print_cohort_summary(cohorts, args.cohort_limit)
     print_owner_summary(owners, args.owner_limit)
     print_owner_horizon(owner_horizon, args.owner_limit)
+    print_owner_capacity(owner_capacity)
     print_owner_alerts(owner_alerts)
     print_owner_queue(owner_queue)
     print_channel_batches(channel_batches)
@@ -1371,6 +1519,7 @@ def main() -> None:
         "cohort_summary": cohorts,
         "owner_summary": owners,
         "owner_horizon": owner_horizon,
+        "owner_capacity": owner_capacity,
         "owner_queue": owner_queue,
         "touchpoint_forecast": touchpoint_forecast,
         "channel_batches": channel_batches,

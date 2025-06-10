@@ -34,6 +34,12 @@ def main() -> None:
     scored = planner.build_report(records, today, high=70, medium=40, soon_days=14, stale_days=60, stale_boost=15)
     owners = planner.summarize_owners(scored)
     owner_horizon = planner.summarize_owner_horizon(scored)
+    owner_capacity = planner.summarize_owner_capacity(
+        scored,
+        window_days=7,
+        daily_capacity=3,
+        include_overdue=True,
+    )
     owner_alerts = planner.build_owner_alerts(
         owners,
         overdue_threshold=2,
@@ -58,6 +64,7 @@ def main() -> None:
         "cohort_summary": planner.summarize_cohorts(scored),
         "owner_summary": owners,
         "owner_horizon": owner_horizon,
+        "owner_capacity": owner_capacity,
         "owner_queue": planner.build_owner_queue(scored, limit=5, size=3),
         "touchpoint_forecast": touchpoint_forecast,
         "channel_batches": planner.build_channel_batches(scored, limit=4, size=3),

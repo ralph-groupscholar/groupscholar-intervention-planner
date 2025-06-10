@@ -12,6 +12,7 @@ Group Scholar Intervention Planner is a local-first CLI that turns scholar risk 
 - Touchpoint forecast to estimate daily outreach load for upcoming windows.
 - Owner load summary to balance outreach workload.
 - Owner touchpoint horizon to visualize upcoming workload by advisor.
+- Owner capacity plan to estimate near-term advisor workload vs. daily capacity.
 - Channel batch plan to coordinate outreach by preferred channel.
 - Escalation candidate list for high-risk overdue or no-touch cases.
 - JSON export for downstream dashboards or briefings.
@@ -63,6 +64,9 @@ python3 intervention_planner.py \
 - `--escalation-min-score`: minimum priority score for escalation candidates (default: 90).
 - `--forecast-window-days`: days ahead to include in the touchpoint forecast (default: 21).
 - `--forecast-include-overdue`: include overdue touches in the forecast day 0 count.
+- `--owner-capacity-window-days`: days ahead to size owner capacity planning (default: 7).
+- `--owner-daily-capacity`: expected daily touch capacity per owner (default: 3).
+- `--owner-capacity-exclude-overdue`: exclude overdue touches from the capacity window.
 - `--today`: override today's date in `YYYY-MM-DD` format.
 - `--json`: write a JSON report to the given path.
 - `--explain`: include priority reasons in the action queue output.
@@ -85,6 +89,7 @@ Required headers (case-insensitive):
 The CLI prints:
 - A summary of touchpoint status and risk tiers.
 - Overdue aging buckets and no-touch counts by risk tier.
+- Status counts by risk tier (overdue/due-soon/on-track/no-touch).
 - Touchpoint horizon buckets for upcoming outreach windows.
 - Touchpoint forecast with daily counts for the selected window.
 - Stale-touch counts by risk tier.
@@ -92,6 +97,7 @@ The CLI prints:
 - Cohort hotspot summary to target outreach coverage.
 - Owner load summary to balance staff coverage.
 - Owner touchpoint horizon to forecast upcoming advisor workload.
+- Owner capacity plan to compare upcoming touches vs. daily capacity.
 - Owner alerts to flag overloaded caseloads or missing-touch hotspots.
 - Owner action queues to ensure each advisor has clear next steps.
 - Channel batch plan to coordinate outreach across preferred channels.
