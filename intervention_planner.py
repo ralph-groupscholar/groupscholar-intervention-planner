@@ -265,6 +265,7 @@ def summarize(scored: List[ScoredRecord]) -> Dict[str, object]:
     summary["overdue_aging"] = summarize_overdue_aging(scored)
     summary["no_touch_by_risk"] = summarize_no_touch_by_risk(scored)
     summary["status_by_risk"] = summarize_status_by_risk(scored)
+    summary["cadence_adherence"] = summarize_cadence_adherence(scored)
     summary["touchpoint_horizon"] = summarize_touchpoint_horizon(scored)
     summary["stale_touch_by_risk"] = summarize_stale_touch_by_risk(scored)
     return summary
@@ -331,6 +332,40 @@ def summarize_status_by_risk(scored: List[ScoredRecord]) -> Dict[str, Dict[str, 
         mapped = status_map.get(record.status)
         if mapped:
             buckets[tier][mapped] += 1
+    return buckets
+
+
+def summarize_cadence_adherence(scored: List[ScoredRecord]) -> Dict[str, Dict[str, object]]:
+    def make_bucket() -> Dict[str, object]:
+        return {"total": 0, "compliant": 0, "overdue": 0, "no_touch": 0, "compliance_rate": 0.0}
+
+    buckets = {
+        "overall": make_bucket(),
+        "high": make_bucket(),
+        "medium": make_bucket(),
+        "low": make_bucket(),
+    }
+    for record in scored:
+        if record.cadence_days == 7:
+            tier = "high"
+        elif record.cadence_days == 21:
+            tier = "medium"
+        else:
+            tier = "low"
+        for key in ("overall", tier):
+            bucket = buckets[key]
+            bucket["total"] = int(bucket["total"]) + 1
+            if record.status in {"on-track", "due-soon"}:
+                bucket["compliant"] = int(bucket["compliant"]) + 1
+            elif record.status == "overdue":
+                bucket["overdue"] = int(bucket["overdue"]) + 1
+            elif record.status == "no-touch":
+                bucket["no_touch"] = int(bucket["no_touch"]) + 1
+
+    for bucket in buckets.values():
+        total = int(bucket["total"])
+        compliant = int(bucket["compliant"])
+        bucket["compliance_rate"] = round(compliant / total, 2) if total else 0.0
     return buckets
 
 
@@ -854,6 +889,25 @@ def print_status_by_risk(status_by_risk: Dict[str, Dict[str, int]]) -> None:
         print(
             f"{tier:<8} {bucket.get('overdue', 0):>7} {bucket.get('due_soon', 0):>7} "
             f"{bucket.get('on_track', 0):>7} {bucket.get('no_touch', 0):>7}"
+        )
+
+
+def print_cadence_adherence(adherence: Dict[str, Dict[str, object]]) -> None:
+    print("\nCadence Adherence")
+    print("-----------------")
+    if not adherence:
+        print("No cadence adherence data.")
+        return
+    header = f"{'Risk':<8} {'Total':>5} {'Comply':>7} {'Overdue':>7} {'NoTouch':>7} {'Rate':>6}"
+    print(header)
+    print("-" * len(header))
+    for tier in ("overall", "high", "medium", "low"):
+        bucket = adherence.get(tier, {})
+        rate = float(bucket.get("compliance_rate", 0.0)) * 100
+        label = "Overall" if tier == "overall" else tier
+        print(
+            f"{label:<8} {int(bucket.get('total', 0)):>5} {int(bucket.get('compliant', 0)):>7} "
+            f"{int(bucket.get('overdue', 0)):>7} {int(bucket.get('no_touch', 0)):>7} {rate:>5.1f}%"
         )
 
 
@@ -1494,6 +1548,7 @@ def main() -> None:
     print_overdue_aging(summary["overdue_aging"])
     print_no_touch_by_risk(summary["no_touch_by_risk"])
     print_status_by_risk(summary["status_by_risk"])
+    print_cadence_adherence(summary["cadence_adherence"])
     print_touchpoint_horizon(summary["touchpoint_horizon"])
     print_touchpoint_forecast(touchpoint_forecast)
     print_stale_touch_by_risk(summary["stale_touch_by_risk"])

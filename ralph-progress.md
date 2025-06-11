@@ -1,5 +1,10 @@
 # Ralph Progress Log
 
+## Iteration 101
+- Added cadence adherence reporting (overall + by risk tier) with compliant vs. overdue/no-touch rates.
+- Printed the cadence adherence table in CLI output and embedded it in JSON summaries.
+- Added unit coverage for the adherence rollup and updated README output notes.
+
 ## Iteration 22
 - Added status-by-risk tier breakdown to highlight overdue/due-soon/on-track/no-touch mix per tier.
 - Printed the new risk-tier status table in CLI output and embedded it in JSON/DB summaries.

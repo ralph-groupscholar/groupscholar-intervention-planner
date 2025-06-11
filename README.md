@@ -6,6 +6,7 @@ Group Scholar Intervention Planner is a local-first CLI that turns scholar risk 
 - Prioritized action queue based on risk score, cadence, and urgency.
 - Overdue/due-soon/on-track touchpoint classification.
 - Tiered cadence guidance (high/medium/low risk).
+- Cadence adherence rates by risk tier.
 - Stale touch detection with configurable aging boost.
 - Channel mix, high-impact flag counts, and cohort hotspot summary.
 - Touchpoint horizon buckets to plan near-term outreach coverage.
@@ -90,6 +91,7 @@ The CLI prints:
 - A summary of touchpoint status and risk tiers.
 - Overdue aging buckets and no-touch counts by risk tier.
 - Status counts by risk tier (overdue/due-soon/on-track/no-touch).
+- Cadence adherence by risk tier (compliant vs. overdue/no-touch).
 - Touchpoint horizon buckets for upcoming outreach windows.
 - Touchpoint forecast with daily counts for the selected window.
 - Stale-touch counts by risk tier.
